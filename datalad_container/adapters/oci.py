@@ -448,19 +448,18 @@ def podman_run(image_id, cmd):
         Command to execute in the container
     """
     lgr.debug("Executing with Podman: %s", image_id)
+
     podman_args = [
         "podman", "run",
-        # Mount current directory to /tmp
-        "-v", os.getcwd() + ":/tmp",
-        # Set working directory
+        "-v", os.getcwd() + ":/tmp:Z",
         "-w", "/tmp",
-        # Remove container after execution
         "--rm",
     ]
 
-    # Add user ID mapping (Linux only)
+    # Use Podman's keep-id for proper user namespace mapping (Linux only)
+    # This maps the current user into the container instead of hardcoding UID
     if sys.platform != "win32":
-        podman_args.extend(["-u", "{}:{}".format(os.getuid(), os.getgid())])
+        podman_args.extend(["--userns=keep-id"])
 
     # Add interactive mode
     podman_args.append("-i")
