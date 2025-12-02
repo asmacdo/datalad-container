@@ -6,39 +6,26 @@ This document describes how ReproNim/containers can leverage the refactored data
 
 ## New Capabilities
 
-### 1. Multiple Image Formats
+### 1. Multiple Image Formats and Versions
 
-With native format storage, ReproNim can now provide:
+With native format storage and versioned image directories, ReproNim can provide:
 
-**Singularity/SIF images** (current approach):
+**Multiple versions per image:**
 ```
-.datalad/environments/
-├── bids-mriqc/image.sif
-├── bids-fmriprep/image.sif
-└── bids-freesurfer/image.sif
-```
-
-**OCI images** (new capability):
-```
-.datalad/environments/
-├── bids-mriqc/
-│   └── image/           # OCI directory
-│       ├── blobs/
-│       ├── index.json
-│       └── oci-layout
-└── bids-fmriprep/
-    └── image/
-```
-
-**Both in the same dataset:**
-```
-.datalad/environments/
-├── bids-mriqc/
-│   ├── image/            # OCI (for multi-runtime support)
-│   └── image.sif         # SIF (for HPC convenience)
-└── bids-fmriprep/
-    ├── image/
-    └── image.sif
+.datalad/containers/images/
+├── mriqc/
+│   ├── sources.yaml
+│   ├── 23.1.0/
+│   │   ├── image/          # OCI directory
+│   │   └── image.sif       # Optional SIF
+│   └── 24.0.0/
+│       └── image/
+└── fmriprep/
+    ├── sources.yaml
+    ├── 23.2.0/
+    │   └── image/
+    └── 24.1.0/
+        └── image/
 ```
 
 ### Benefits of OCI format for ReproNim:
@@ -57,18 +44,18 @@ ReproNim ships curated base profiles alongside images. Users extend these for th
 ### ReproNim Base Profiles
 
 ```yaml
-# .datalad/profiles/mriqc.yaml
+# .datalad/containers/profiles/mriqc.yaml
 # Base MRIQC profile - sane defaults for most users
 
-image: bids-mriqc
+image: mriqc/23.1.0
 exec: apptainer exec --cleanenv {img} {cmd}
 ```
 
 ```yaml
-# .datalad/profiles/fmriprep.yaml
+# .datalad/containers/profiles/fmriprep.yaml
 # Base fMRIPrep profile
 
-image: bids-fmriprep
+image: fmriprep/23.2.0
 exec: apptainer exec --cleanenv {img} {cmd}
 ```
 
@@ -77,16 +64,16 @@ exec: apptainer exec --cleanenv {img} {cmd}
 Users create their own profiles that extend ReproNim's base:
 
 ```yaml
-# my-analysis/.datalad/profiles/mriqc-mylab.yaml
+# my-analysis/.datalad/containers/profiles/mriqc-mylab.yaml
 
-extends: inputs/containers/.datalad/profiles/mriqc.yaml
+extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
 exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /data/mylab:/input {img} {cmd}
 ```
 
 ```yaml
-# my-analysis/.datalad/profiles/mriqc-gpu.yaml
+# my-analysis/.datalad/containers/profiles/mriqc-gpu.yaml
 
-extends: inputs/containers/.datalad/profiles/mriqc.yaml
+extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
 exec: apptainer exec --cleanenv --nv {img} {cmd}
 ```
 
@@ -100,23 +87,26 @@ exec: apptainer exec --cleanenv --nv {img} {cmd}
 
 ```
 ReproNim/containers/
-├── .datalad/
-│   ├── config                    # Minimal settings
-│   ├── images/                   # Image registrations (YAML)
-│   │   ├── bids-mriqc.yaml
-│   │   ├── bids-fmriprep.yaml
-│   │   └── bids-freesurfer.yaml
-│   ├── profiles/                 # Base execution profiles
-│   │   ├── mriqc.yaml
-│   │   ├── fmriprep.yaml
-│   │   └── freesurfer.yaml
-│   └── environments/             # Actual image storage
-│       ├── bids-mriqc/
-│       │   ├── image/           # OCI directory
-│       │   └── image.sif        # Optional SIF
-│       └── bids-fmriprep/
-│           ├── image/
-│           └── image.sif
+├── .datalad/containers/
+│   ├── images/
+│   │   ├── mriqc/
+│   │   │   ├── sources.yaml
+│   │   │   ├── 23.1.0/
+│   │   │   │   ├── image/
+│   │   │   │   └── image.sif
+│   │   │   └── 24.0.0/
+│   │   │       └── image/
+│   │   └── fmriprep/
+│   │       ├── sources.yaml
+│   │       ├── 23.2.0/
+│   │       │   └── image/
+│   │       └── 24.1.0/
+│   │           └── image/
+│   └── profiles/
+│       ├── mriqc.yaml
+│       ├── mriqc-24.yaml
+│       ├── fmriprep.yaml
+│       └── fmriprep-24.yaml
 │
 ├── scripts/
 │   ├── singularity_cmd          # Isolated execution wrapper (existing)
@@ -125,21 +115,20 @@ ReproNim/containers/
 └── README.md
 ```
 
-### Image Registration Example
+### sources.yaml Example
 
 ```yaml
-# .datalad/images/bids-mriqc.yaml
+# .datalad/containers/images/mriqc/sources.yaml
 
-source:
-  url: docker://nipreps/mriqc:23.1.0
-  registry: docker.io
-  digest: sha256:abc123def456...
-  fetched: 2024-01-15T10:30:00Z
-
-storage:
-  path: .datalad/environments/bids-mriqc/image
-  format: oci
-  sif: .datalad/environments/bids-mriqc/image.sif  # optional
+versions:
+  23.1.0:
+    url: docker://nipreps/mriqc:23.1.0
+    digest: sha256:abc123def456...
+    fetched: 2024-01-15T10:30:00Z
+  24.0.0:
+    url: docker://nipreps/mriqc:24.0.0
+    digest: sha256:def456789...
+    fetched: 2024-02-20T14:00:00Z
 ```
 
 ---
@@ -165,8 +154,9 @@ datalad containers-run -d inputs/containers --profile mriqc \
 
 ```bash
 # Create your own profile extending ReproNim's base
-cat > .datalad/profiles/mriqc-mylab.yaml << 'EOF'
-extends: inputs/containers/.datalad/profiles/mriqc.yaml
+mkdir -p .datalad/containers/profiles
+cat > .datalad/containers/profiles/mriqc-mylab.yaml << 'EOF'
+extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
 exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /gpfs/mylab:/data {img} {cmd}
 EOF
 
@@ -184,14 +174,27 @@ datalad containers-run -d inputs/containers --profile mriqc \
     mriqc /bids /outputs participant
 ```
 
+### Using a Specific Version
+
+```bash
+# Create profile for newer version
+cat > .datalad/containers/profiles/mriqc-24.yaml << 'EOF'
+image: mriqc/24.0.0
+exec: apptainer exec --cleanenv {img} {cmd}
+EOF
+
+datalad containers-run --profile mriqc-24 \
+    mriqc /bids /outputs participant
+```
+
 ---
 
 ## 5. Migration Path
 
 ### Phase 1: Add new structure (non-breaking)
 
-- Add `.datalad/images/` YAML files
-- Add `.datalad/profiles/` YAML files
+- Add `.datalad/containers/images/` with versioned directories
+- Add `.datalad/containers/profiles/` YAML files
 - Add OCI images alongside existing SIF files
 - Keep existing `.datalad/config` entries
 
@@ -213,6 +216,7 @@ datalad containers-run -d inputs/containers --profile mriqc \
 | Aspect | Current | With Refactor |
 |--------|---------|---------------|
 | Image formats | SIF only | SIF + OCI |
+| Image versions | Flat naming | Structured versioning |
 | Layer sharing | None | Deduplication across containers |
 | Execution config | Hardcoded in wrapper | Base profiles, user-extendable |
 | Runtime flexibility | Singularity only | Any runtime via profile |
@@ -228,7 +232,7 @@ datalad containers-run -d inputs/containers --profile mriqc \
 
 2. **Base profile scope** - Just image + minimal exec, or include common bind mounts?
 
-3. **Profile naming** - `mriqc.yaml` or `bids-mriqc.yaml` to match image names?
+3. **Profile per version** - One profile per version (mriqc-23.yaml, mriqc-24.yaml) or update profile to point to latest?
 
 4. **Backward compatibility** - How long to maintain legacy `.datalad/config` entries?
 

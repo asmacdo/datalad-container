@@ -69,20 +69,20 @@ This loses information, creates unnecessary conversions, and is confusing.
 | Singularity Hub | SIF/simg | Single file |
 | Local SIF file | SIF | Copy as-is |
 
-**Provenance as YAML files** (not .datalad/config):
+**Provenance stored in consolidated sources.yaml per image:**
 
 ```yaml
-# .datalad/images/mriqc.yaml
+# .datalad/containers/images/mriqc/sources.yaml
 
-source:
-  url: docker://nipreps/mriqc:23.1.0
-  registry: docker.io
-  digest: sha256:abc123def456...
-  fetched: 2024-01-15T10:30:00Z
-
-storage:
-  path: .datalad/environments/mriqc/image
-  format: oci
+versions:
+  23.1.0:
+    url: docker://nipreps/mriqc:23.1.0
+    digest: sha256:abc123def456...
+    fetched: 2024-01-15T10:30:00Z
+  24.0.0:
+    url: docker://nipreps/mriqc:24.0.0
+    digest: sha256:def456789...
+    fetched: 2024-02-20T14:00:00Z
 ```
 
 **Why YAML files instead of .datalad/config?**
@@ -97,7 +97,7 @@ storage:
 
 For OCI images, individual layers get registry URLs for efficient retrieval:
 ```bash
-git annex whereis .datalad/environments/mriqc/image/blobs/sha256/abc123
+git annex whereis .datalad/containers/images/mriqc/23.1.0/image/blobs/sha256/abc123
 # → docker.io/nipreps/mriqc@sha256:abc123
 ```
 
@@ -134,18 +134,18 @@ Scientists need to run the same image with different configurations:
 
 ### Profile Structure
 
-Profiles are YAML files in `.datalad/profiles/`:
+Profiles are YAML files in `.datalad/containers/profiles/`:
 
 ```yaml
-# .datalad/profiles/mriqc.yaml
+# .datalad/containers/profiles/mriqc.yaml
 # Base MRIQC profile (shipped by ReproNim/containers)
 
-image: mriqc
+image: mriqc/23.1.0
 exec: apptainer exec --cleanenv {img} {cmd}
 ```
 
 ```yaml
-# .datalad/profiles/mriqc-myexperiment.yaml
+# .datalad/containers/profiles/mriqc-myexperiment.yaml
 # User's experiment-specific profile
 
 extends: mriqc
@@ -159,9 +159,9 @@ exec: apptainer exec --cleanenv --nv --bind /data/myexp:/input {img} {cmd}
 Profiles can extend profiles from subdatasets (e.g., ReproNim/containers):
 
 ```yaml
-# my-analysis/.datalad/profiles/mriqc-myexperiment.yaml
+# my-analysis/.datalad/containers/profiles/mriqc-myexperiment.yaml
 
-extends: inputs/containers/.datalad/profiles/mriqc.yaml
+extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
 exec: apptainer exec --cleanenv --nv --bind /data/myexp:/input {img} {cmd}
 ```
 
@@ -186,9 +186,9 @@ Run records capture the **resolved execution command**:
 
 ```json
 {
-  "cmd": "apptainer exec --cleanenv --nv --bind /data/myexp:/input oci:.datalad/environments/mriqc/image mriqc /input /output participant",
+  "cmd": "apptainer exec --cleanenv --nv --bind /data/myexp:/input oci:.datalad/containers/images/mriqc/23.1.0/image mriqc /input /output participant",
   "profile": "mriqc-myexperiment",
-  "profile-source": ".datalad/profiles/mriqc-myexperiment.yaml"
+  "profile-source": ".datalad/containers/profiles/mriqc-myexperiment.yaml"
 }
 ```
 
@@ -206,7 +206,7 @@ datalad containers-add mriqc --url docker://nipreps/mriqc:23.1.0
 
 Storage:
 ```
-.datalad/environments/mriqc/
+.datalad/containers/images/mriqc/23.1.0/
 └── image/                    # OCI directory
     ├── blobs/sha256/...     # Layers (git-annex tracked)
     ├── index.json
@@ -222,7 +222,7 @@ datalad containers-add custom --url /path/to/custom.sif
 
 Storage:
 ```
-.datalad/environments/dcm2niix/
+.datalad/containers/images/dcm2niix/latest/
 └── image.sif                # Single file (git-annex tracked)
 ```
 
@@ -232,10 +232,10 @@ Optional conversion for optimization:
 
 ```bash
 # Convert OCI to SIF (for HPC performance)
-datalad containers-convert mriqc --to sif
+datalad containers-convert mriqc/23.1.0 --to sif
 
 # Creates:
-# .datalad/environments/mriqc/image.sif (alongside OCI directory)
+# .datalad/containers/images/mriqc/23.1.0/image.sif (alongside OCI directory)
 ```
 
 Both formats can coexist; profiles reference the appropriate one.
@@ -245,29 +245,25 @@ Both formats can coexist; profiles reference the appropriate one.
 ## 5. File Layout
 
 ```
-.datalad/
-├── config                      # Minimal settings only
-├── images/                     # Image registrations (YAML)
-│   ├── mriqc.yaml
-│   └── fmriprep.yaml
-├── profiles/                   # Execution profiles (YAML)
-│   ├── mriqc.yaml              # Base profile for mriqc
-│   └── mriqc-myexperiment.yaml # User's extension
-└── environments/               # Actual image storage
-    ├── mriqc/
-    │   └── image/              # OCI directory
-    └── fmriprep/
-        └── image/
+.datalad/containers/
+├── images/
+│   ├── mriqc/
+│   │   ├── sources.yaml          # Provenance for all versions
+│   │   ├── 23.1.0/
+│   │   │   ├── image/            # OCI directory
+│   │   │   └── image.sif         # Optional converted SIF
+│   │   └── 24.0.0/
+│   │       └── image/
+│   └── fmriprep/
+│       ├── sources.yaml
+│       └── 23.2.0/
+│           └── image/
+└── profiles/
+    ├── mriqc.yaml                # Base profile (references mriqc/23.1.0)
+    └── mriqc-myexperiment.yaml   # User's extension
 ```
 
-**.datalad/config** contains only minimal settings:
-```ini
-[datalad "containers"]
-    images-path = .datalad/images
-    profiles-path = .datalad/profiles
-```
-
-Everything else lives in YAML files.
+Everything under `.datalad/containers/`. No separate `environments/` directory.
 
 ---
 
@@ -278,7 +274,11 @@ Everything else lives in YAML files.
 ```bash
 # Add image from registry
 datalad containers-add mriqc --url docker://nipreps/mriqc:23.1.0
-# Creates: .datalad/images/mriqc.yaml + fetches image
+# Creates: .datalad/containers/images/mriqc/23.1.0/ + updates sources.yaml
+
+# Add another version
+datalad containers-add mriqc --url docker://nipreps/mriqc:24.0.0
+# Creates: .datalad/containers/images/mriqc/24.0.0/ + updates sources.yaml
 ```
 
 ### containers-run
