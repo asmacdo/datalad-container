@@ -12,15 +12,15 @@ With native format storage, ReproNim can now provide:
 
 **Singularity/SIF images** (current approach):
 ```
-images/
-├── bids-mriqc.sif
-├── bids-fmriprep.sif
-└── bids-freesurfer.sif
+.datalad/environments/
+├── bids-mriqc/image.sif
+├── bids-fmriprep/image.sif
+└── bids-freesurfer/image.sif
 ```
 
 **OCI images** (new capability):
 ```
-images/
+.datalad/environments/
 ├── bids-mriqc/
 │   └── image/           # OCI directory
 │       ├── blobs/
@@ -32,11 +32,13 @@ images/
 
 **Both in the same dataset:**
 ```
-images/
-├── bids-mriqc.sif                    # For HPC users who want single file
-├── bids-mriqc/image/                 # For users who want OCI layers
-├── bids-fmriprep.sif
-└── bids-fmriprep/image/
+.datalad/environments/
+├── bids-mriqc/
+│   ├── image/            # OCI (for multi-runtime support)
+│   └── image.sif         # SIF (for HPC convenience)
+└── bids-fmriprep/
+    ├── image/
+    └── image.sif
 ```
 
 ### Benefits of OCI format for ReproNim:
@@ -50,85 +52,45 @@ images/
 
 ## 2. Execution Profiles
 
-ReproNim can ship curated execution profiles alongside images.
+ReproNim ships curated base profiles alongside images. Users extend these for their specific needs.
 
-### Profile Library
+### ReproNim Base Profiles
 
-```ini
-# .datalad/config in ReproNim/containers
+```yaml
+# .datalad/profiles/mriqc.yaml
+# Base MRIQC profile - sane defaults for most users
 
-# ============================================
-# Base profiles (runtime-specific defaults)
-# ============================================
-
-[datalad "execution-profile.repronim-apptainer"]
-    runtime = apptainer
-    template = {scripts}/singularity_cmd exec {img} {cmd}
-    description = "ReproNim isolated Apptainer execution"
-
-[datalad "execution-profile.repronim-apptainer-gpu"]
-    runtime = apptainer
-    template = {scripts}/singularity_cmd exec --nv {img} {cmd}
-    description = "ReproNim isolated Apptainer with GPU"
-
-[datalad "execution-profile.repronim-singularity"]
-    runtime = singularity
-    template = {scripts}/singularity_cmd exec {img} {cmd}
-    description = "ReproNim isolated Singularity execution"
-
-[datalad "execution-profile.repronim-docker"]
-    runtime = docker
-    template = docker run --rm -v {pwd}:/work -w /work {img} {cmd}
-    description = "Docker execution"
-
-# ============================================
-# Container-specific profiles
-# ============================================
-
-[datalad "containers.bids-mriqc.profile.default"]
-    extends = repronim-apptainer
-    description = "Standard MRIQC execution"
-
-[datalad "containers.bids-mriqc.profile.hpc"]
-    extends = repronim-apptainer
-    runtime-args = --bind /scratch:/scratch --bind /work:/work
-    description = "MRIQC for HPC with scratch space"
-
-[datalad "containers.bids-mriqc.profile.gpu"]
-    extends = repronim-apptainer-gpu
-    description = "MRIQC with GPU support"
-
-[datalad "containers.bids-fmriprep.profile.default"]
-    extends = repronim-apptainer
-    description = "Standard fMRIPrep execution"
-
-[datalad "containers.bids-fmriprep.profile.hpc-large"]
-    extends = repronim-apptainer
-    runtime-args = --bind /scratch:/scratch --memory 64G
-    description = "fMRIPrep for large datasets on HPC"
+image: bids-mriqc
+exec: apptainer exec --cleanenv {img} {cmd}
 ```
 
-### Usage in Downstream Datasets
+```yaml
+# .datalad/profiles/fmriprep.yaml
+# Base fMRIPrep profile
 
-```bash
-# Clone ReproNim containers
-datalad clone https://github.com/ReproNim/containers inputs/containers
-
-# In your analysis dataset, use ReproNim's curated profiles
-datalad containers-run \
-    -d inputs/containers \
-    -n bids-mriqc \
-    --profile hpc \
-    mriqc /data /outputs participant
-
-# Or override for your specific HPC
-datalad containers-run \
-    -d inputs/containers \
-    -n bids-mriqc \
-    --profile hpc \
-    --runtime-args "--bind /gpfs:/gpfs" \
-    mriqc /data /outputs participant
+image: bids-fmriprep
+exec: apptainer exec --cleanenv {img} {cmd}
 ```
+
+### User Extensions
+
+Users create their own profiles that extend ReproNim's base:
+
+```yaml
+# my-analysis/.datalad/profiles/mriqc-mylab.yaml
+
+extends: inputs/containers/.datalad/profiles/mriqc.yaml
+exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /data/mylab:/input {img} {cmd}
+```
+
+```yaml
+# my-analysis/.datalad/profiles/mriqc-gpu.yaml
+
+extends: inputs/containers/.datalad/profiles/mriqc.yaml
+exec: apptainer exec --cleanenv --nv {img} {cmd}
+```
+
+**Key point:** ReproNim provides the base. Users clobber `exec` with their environment-specific settings. No runtime-specific profiles (apptainer-gpu, podman-default, etc.) - users know what they need.
 
 ---
 
@@ -139,67 +101,45 @@ datalad containers-run \
 ```
 ReproNim/containers/
 ├── .datalad/
-│   ├── config                    # Container registrations + profiles
-│   └── environments/             # Legacy location (backward compat)
-│
-├── images/                       # New image storage location
-│   ├── bids-mriqc/
-│   │   ├── image/               # OCI directory
-│   │   ├── image.sif            # Optional SIF (for HPC convenience)
-│   │   └── metadata.json        # Provenance
-│   │
-│   ├── bids-fmriprep/
-│   │   ├── image/
-│   │   ├── image.sif
-│   │   └── metadata.json
-│   │
-│   └── bids-freesurfer/
-│       ├── image/
-│       └── metadata.json
+│   ├── config                    # Minimal settings
+│   ├── images/                   # Image registrations (YAML)
+│   │   ├── bids-mriqc.yaml
+│   │   ├── bids-fmriprep.yaml
+│   │   └── bids-freesurfer.yaml
+│   ├── profiles/                 # Base execution profiles
+│   │   ├── mriqc.yaml
+│   │   ├── fmriprep.yaml
+│   │   └── freesurfer.yaml
+│   └── environments/             # Actual image storage
+│       ├── bids-mriqc/
+│       │   ├── image/           # OCI directory
+│       │   └── image.sif        # Optional SIF
+│       └── bids-fmriprep/
+│           ├── image/
+│           └── image.sif
 │
 ├── scripts/
-│   ├── singularity_cmd          # Isolated execution wrapper
-│   ├── freeze_versions          # Version pinning tool
-│   └── check_runtime            # Runtime availability checker
-│
-├── profiles/                     # Optional: profile documentation
-│   ├── README.md
-│   ├── hpc-examples.md
-│   └── gpu-setup.md
+│   ├── singularity_cmd          # Isolated execution wrapper (existing)
+│   └── freeze_versions          # Version pinning tool
 │
 └── README.md
 ```
 
-### Configuration:
+### Image Registration Example
 
-```ini
-# .datalad/config
+```yaml
+# .datalad/images/bids-mriqc.yaml
 
-# Dataset defaults
-[datalad "execution"]
-    default-profile = repronim-apptainer
-    scripts-path = scripts
+source:
+  url: docker://nipreps/mriqc:23.1.0
+  registry: docker.io
+  digest: sha256:abc123def456...
+  fetched: 2024-01-15T10:30:00Z
 
-# Container registrations
-[datalad "containers.bids-mriqc"]
-    image = images/bids-mriqc/image
-    image-sif = images/bids-mriqc/image.sif
-    source-url = docker://nipreps/mriqc:23.1.0
-    source-digest = sha256:abc123...
-    format = oci
-    default-profile = bids-mriqc.default
-
-[datalad "containers.bids-fmriprep"]
-    image = images/bids-fmriprep/image
-    image-sif = images/bids-fmriprep/image.sif
-    source-url = docker://nipreps/fmriprep:23.2.0
-    source-digest = sha256:def456...
-    format = oci
-    default-profile = bids-fmriprep.default
-
-# Profiles (as shown above)
-[datalad "execution-profile.repronim-apptainer"]
-    # ...
+storage:
+  path: .datalad/environments/bids-mriqc/image
+  format: oci
+  sif: .datalad/environments/bids-mriqc/image.sif  # optional
 ```
 
 ---
@@ -210,82 +150,61 @@ ReproNim/containers/
 
 ```bash
 # Get ReproNim containers
-datalad clone https://github.com/ReproNim/containers
-
-# List available containers
-datalad containers-list -d containers
-
-# List available profiles
-datalad containers-profiles -d containers
-
-# Run with default profile
-datalad containers-run -d containers -n bids-mriqc \
-    mriqc /bids /outputs participant
-```
-
-### HPC Workflow
-
-```bash
-# Clone into project
 datalad clone https://github.com/ReproNim/containers inputs/containers
 
-# Check which profiles are available
-datalad containers-profiles -d inputs/containers --show bids-fmriprep
+# List available images and profiles
+datalad containers-images -d inputs/containers
+datalad containers-profiles -d inputs/containers
 
-# Run with HPC profile
-datalad run \
-    --input inputs/bids \
-    --input inputs/containers/images/bids-fmriprep \
-    --output outputs/fmriprep \
-    "$(datalad containers-run -d inputs/containers -n bids-fmriprep --profile hpc --dry-run \
-        fmriprep /inputs/bids /outputs/fmriprep participant)"
-```
-
-### GPU Workflow
-
-```bash
-# Use GPU profile
-datalad containers-run -d containers -n bids-mriqc \
-    --profile gpu \
+# Run with base profile
+datalad containers-run -d inputs/containers --profile mriqc \
     mriqc /bids /outputs participant
 ```
 
-### Custom Override
+### Creating a Lab-Specific Profile
 
 ```bash
-# Start from HPC profile, add custom binds
-datalad containers-run -d containers -n bids-fmriprep \
-    --profile hpc \
-    --runtime-args "--bind /project/mylab:/project" \
-    fmriprep /bids /outputs participant
+# Create your own profile extending ReproNim's base
+cat > .datalad/profiles/mriqc-mylab.yaml << 'EOF'
+extends: inputs/containers/.datalad/profiles/mriqc.yaml
+exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /gpfs/mylab:/data {img} {cmd}
+EOF
+
+# Use it
+datalad containers-run --profile mriqc-mylab \
+    mriqc /data/bids /data/outputs participant
+```
+
+### One-Off Override
+
+```bash
+# Use base profile but override exec for this run
+datalad containers-run -d inputs/containers --profile mriqc \
+    --exec "apptainer exec --cleanenv --nv {img} {cmd}" \
+    mriqc /bids /outputs participant
 ```
 
 ---
 
 ## 5. Migration Path
 
-### Phase 1: Add OCI support (non-breaking)
+### Phase 1: Add new structure (non-breaking)
 
+- Add `.datalad/images/` YAML files
+- Add `.datalad/profiles/` YAML files
 - Add OCI images alongside existing SIF files
-- Add execution profiles to config
-- Update documentation
+- Keep existing `.datalad/config` entries
 
-```
-images/
-├── bids-mriqc.sing              # Existing (keep)
-├── bids-mriqc/image/            # New OCI directory
-```
+### Phase 2: Recommend new approach
 
-### Phase 2: Recommend OCI + profiles
-
-- Default documentation uses OCI + profiles
-- SIF files still available for backward compatibility
+- Default documentation uses profiles
+- Legacy config still works
 - Add migration guide
 
-### Phase 3: Optimize storage
+### Phase 3: Simplify storage
 
-- Consider removing duplicate SIF files
-- Or generate SIF on-demand with `containers-convert`
+- Consider generating SIF on-demand with `containers-convert`
+- Or keep both for user convenience
 
 ---
 
@@ -295,11 +214,11 @@ images/
 |--------|---------|---------------|
 | Image formats | SIF only | SIF + OCI |
 | Layer sharing | None | Deduplication across containers |
-| Execution config | Hardcoded in singularity_cmd | Named profiles, user-overridable |
-| Runtime flexibility | Singularity only | Apptainer, Singularity, Podman, Docker |
+| Execution config | Hardcoded in wrapper | Base profiles, user-extendable |
+| Runtime flexibility | Singularity only | Any runtime via profile |
 | Provenance | Wrapper invocation | Actual command recorded |
-| Customization | Fork or edit wrapper | Override profile at runtime |
-| HPC adaptation | Manual | Profile selection |
+| Customization | Fork or edit wrapper | Extend profile, clobber exec |
+| HPC adaptation | Manual | User creates their own profile |
 
 ---
 
@@ -307,12 +226,10 @@ images/
 
 1. **Dual format storage** - Ship both OCI and SIF, or OCI-only with on-demand conversion?
 
-2. **Profile curation** - Who maintains profiles? How are they tested?
+2. **Base profile scope** - Just image + minimal exec, or include common bind mounts?
 
-3. **Profile naming** - `repronim-*` prefix for ReproNim-curated profiles?
+3. **Profile naming** - `mriqc.yaml` or `bids-mriqc.yaml` to match image names?
 
-4. **Backward compatibility** - How long to maintain legacy `.sing` files?
+4. **Backward compatibility** - How long to maintain legacy `.datalad/config` entries?
 
-5. **Profile documentation** - Inline in config, or separate docs?
-
-6. **Default runtime** - Apptainer as default, or require explicit selection?
+5. **singularity_cmd wrapper** - Keep as option in profiles, or phase out in favor of explicit exec?

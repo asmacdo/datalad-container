@@ -34,27 +34,10 @@ ghcr://org/repo:tag             # GitHub Container Registry
 shub://org/repo:tag             # Singularity Hub (legacy)
 ```
 
-**Implementation:**
-
-(TODO how do custom/local registries)
-
-```python
-REGISTRY_MAP = {
-    'docker': 'docker.io',
-    'quay': 'quay.io',
-    'ghcr': 'ghcr.io',
-    'ecr': 'public.ecr.aws',
-    # extensible...
-}
-
-def resolve_registry(url):
-    """docker://nipreps/mriqc:23.1.0 → docker.io/nipreps/mriqc:23.1.0"""
-    protocol, path = url.split('://', 1)
-    registry = REGISTRY_MAP.get(protocol)
-    if registry:
-        return f"{registry}/{path}"
-    raise ValueError(f"Unknown registry protocol: {protocol}")
-```
+**Open question:** How to handle custom/private registries? Options:
+- `oci://registry.example.com/org/repo:tag` - generic OCI protocol
+- `docker://registry.example.com/org/repo:tag` - registry in path
+- New protocol per registry (doesn't scale)
 
 **Usage:**
 
@@ -86,18 +69,29 @@ This loses information, creates unnecessary conversions, and is confusing.
 | Singularity Hub | SIF/simg | Single file |
 | Local SIF file | SIF | Copy as-is |
 
-**Provenance tracking:**
+**Provenance as YAML files** (not .datalad/config):
 
-```ini
-# .datalad/config
-[datalad "containers.mriqc"]
-    image = .datalad/environments/mriqc/image
-    source-url = docker://nipreps/mriqc:23.1.0
-    source-registry = docker.io
-    source-digest = sha256:abc123...
-    format = oci
-    fetched = 2024-01-15T10:30:00Z
+```yaml
+# .datalad/images/mriqc.yaml
+
+source:
+  url: docker://nipreps/mriqc:23.1.0
+  registry: docker.io
+  digest: sha256:abc123def456...
+  fetched: 2024-01-15T10:30:00Z
+
+storage:
+  path: .datalad/environments/mriqc/image
+  format: oci
 ```
+
+**Why YAML files instead of .datalad/config?**
+- YAML supports richer structures (lists, nested objects)
+- Each image/profile is a separate, self-contained unit
+- Easier to read, share, and version independently
+- Cleaner git diffs
+- Can include comments/documentation
+- Profiles can be copied between projects
 
 **Git-annex integration:**
 
@@ -115,9 +109,9 @@ git annex whereis .datalad/environments/mriqc/image/blobs/sha256/abc123
 
 Execution configuration is either:
 - Hardcoded in Python (`docker_run()` with fixed flags)
-   - Problem becomes worse with other runtimes, ie `podman_run()`
+  - Problem becomes worse with other runtimes, ie `podman_run()`
 - Baked into cmdexec at add-time (inflexible)
-    - can be changed, but requires knowledge of datalad-containers internals
+  - Can be changed, but requires knowledge of datalad-containers internals
 - Hidden from provenance (shim invocation recorded, not actual command)
 
 Scientists need to run the same image with different configurations:
@@ -127,85 +121,78 @@ Scientists need to run the same image with different configurations:
 
 ### Proposed Solution
 
-**Execution profiles** are named, reusable execution configurations stored alongside images or in dataset config.
+**Two concepts only:**
 
-#### Profile Definition
+1. **Image** - artifact with provenance, no execution semantics
+2. **Profile** - execution recipe that references an image, can extend other profiles
 
-```ini
-# .datalad/config
+**Key design decisions:**
+- Profiles point to images (not images to profiles)
+- Profiles can extend other profiles
+- Child profiles **clobber** parent values (no merging)
+- Provenance records the resolved command, not just profile name
 
-# Global profiles (apply to any image)
-[datalad "execution-profile.apptainer-default"]
-    runtime = apptainer
-    template = apptainer exec {runtime-args} {img} {cmd}
-    runtime-args = --cleanenv
+### Profile Structure
 
-[datalad "execution-profile.apptainer-gpu"]
-    runtime = apptainer
-    template = apptainer exec {runtime-args} {img} {cmd}
-    runtime-args = --cleanenv --nv
+Profiles are YAML files in `.datalad/profiles/`:
 
-[datalad "execution-profile.podman-default"]
-    runtime = podman
-    template = podman run {runtime-args} {img} {cmd}
-    runtime-args = --rm --userns=keep-id -v {pwd}:/work -w /work
+```yaml
+# .datalad/profiles/mriqc.yaml
+# Base MRIQC profile (shipped by ReproNim/containers)
 
-[datalad "execution-profile.podman-gpu"]
-    runtime = podman
-    template = podman run {runtime-args} {img} {cmd}
-    runtime-args = --rm --userns=keep-id --device nvidia.com/gpu=all -v {pwd}:/work -w /work
-
-# Container-specific profile
-[datalad "containers.mriqc.profile.hpc"]
-    extends = apptainer-gpu
-    runtime-args = --cleanenv --nv --bind /scratch:/scratch
+image: mriqc
+exec: apptainer exec --cleanenv {img} {cmd}
 ```
 
-#### Profile Usage
+```yaml
+# .datalad/profiles/mriqc-myexperiment.yaml
+# User's experiment-specific profile
+
+extends: mriqc
+exec: apptainer exec --cleanenv --nv --bind /data/myexp:/input {img} {cmd}
+```
+
+**Clobber semantics:** The child's `exec` completely replaces the parent's. If you want the parent's flags plus yours, you copy them explicitly. No magic merging.
+
+### Cross-Dataset Extension
+
+Profiles can extend profiles from subdatasets (e.g., ReproNim/containers):
+
+```yaml
+# my-analysis/.datalad/profiles/mriqc-myexperiment.yaml
+
+extends: inputs/containers/.datalad/profiles/mriqc.yaml
+exec: apptainer exec --cleanenv --nv --bind /data/myexp:/input {img} {cmd}
+```
+
+The path is explicit and unambiguous. Git tracks the subdataset relationship.
+
+### Profile Usage
 
 ```bash
-# Use a named profile
-datalad containers-run -n mriqc --profile apptainer-gpu mriqc --version
+# Run with a profile
+datalad containers-run --profile mriqc-myexperiment \
+    mriqc /input /output participant
 
-# Use container-specific profile
-datalad containers-run -n mriqc --profile mriqc.hpc mriqc --version
-
-# Override profile at runtime
-datalad containers-run -n mriqc --profile apptainer-gpu \
-    --runtime-args "--bind /data:/data" \
-    mriqc /data /outputs participant
-
-# Direct cmdexec (bypass profiles entirely)
-datalad containers-run -n mriqc \
-    --cmdexec "singularity exec --nv {img} {cmd}" \
-    mriqc --version
+# Override exec at runtime (bypass profile)
+datalad containers-run --profile mriqc \
+    --exec "apptainer exec --nv {img} {cmd}" \
+    mriqc /input /output participant
 ```
 
-#### Profile Resolution
+### Provenance
 
-Precedence (highest to lowest):
-1. `--cmdexec` flag (complete override)
-2. `--runtime-args` flag (extends profile)
-3. `--profile` flag (named profile)
-4. Container default profile (`datalad.containers.<name>.default-profile`)
-5. Dataset default profile (`datalad.execution.default-profile`)
-6. Built-in fallback (error if no profile found)
-
-#### Provenance
-
-Run records capture the **expanded** command, not profile references:
+Run records capture the **resolved execution command**:
 
 ```json
 {
-  "cmd": "apptainer exec --cleanenv --nv --bind /scratch:/scratch oci:.datalad/environments/mriqc/image mriqc /data /outputs participant",
-  "inputs": [".datalad/environments/mriqc/image", "/data"],
-  "outputs": ["/outputs"],
-  "container": "mriqc",
-  "profile": "mriqc.hpc"
+  "cmd": "apptainer exec --cleanenv --nv --bind /data/myexp:/input oci:.datalad/environments/mriqc/image mriqc /input /output participant",
+  "profile": "mriqc-myexperiment",
+  "profile-source": ".datalad/profiles/mriqc-myexperiment.yaml"
 }
 ```
 
-The actual execution command is always visible and reproducible.
+The `cmd` is what actually ran. The profile reference is informational.
 
 ---
 
@@ -220,17 +207,11 @@ datalad containers-add mriqc --url docker://nipreps/mriqc:23.1.0
 Storage:
 ```
 .datalad/environments/mriqc/
-├── image/                    # OCI directory
-│   ├── blobs/sha256/...     # Layers (git-annex tracked)
-│   ├── index.json
-│   └── oci-layout
-└── metadata.json            # Provenance info
+└── image/                    # OCI directory
+    ├── blobs/sha256/...     # Layers (git-annex tracked)
+    ├── index.json
+    └── oci-layout
 ```
-
-Execution profiles handle runtime differences:
-- Apptainer: `apptainer exec oci:{img} {cmd}`
-- Podman: loads to daemon, runs with image ID
-- Docker: loads to daemon, runs with image ID
 
 ### Singularity Images (from Singularity Hub or local)
 
@@ -242,12 +223,8 @@ datalad containers-add custom --url /path/to/custom.sif
 Storage:
 ```
 .datalad/environments/dcm2niix/
-├── image.sif                # Single file (git-annex tracked)
-└── metadata.json
+└── image.sif                # Single file (git-annex tracked)
 ```
-
-Execution is straightforward:
-- Apptainer/Singularity: `apptainer exec {img} {cmd}`
 
 ### Format Conversion
 
@@ -265,79 +242,69 @@ Both formats can coexist; profiles reference the appropriate one.
 
 ---
 
-## 5. Interface Changes
+## 5. File Layout
+
+```
+.datalad/
+├── config                      # Minimal settings only
+├── images/                     # Image registrations (YAML)
+│   ├── mriqc.yaml
+│   └── fmriprep.yaml
+├── profiles/                   # Execution profiles (YAML)
+│   ├── mriqc.yaml              # Base profile for mriqc
+│   └── mriqc-myexperiment.yaml # User's extension
+└── environments/               # Actual image storage
+    ├── mriqc/
+    │   └── image/              # OCI directory
+    └── fmriprep/
+        └── image/
+```
+
+**.datalad/config** contains only minimal settings:
+```ini
+[datalad "containers"]
+    images-path = .datalad/images
+    profiles-path = .datalad/profiles
+```
+
+Everything else lives in YAML files.
+
+---
+
+## 6. Interface Changes
 
 ### containers-add
 
 ```bash
-# Minimal (just register image)
-datalad containers-add <name> --url <registry-url>
-
-# With default profile
-datalad containers-add <name> --url <registry-url> --default-profile apptainer-gpu
-
-# Legacy call-fmt still works (becomes anonymous profile)
-datalad containers-add <name> --url <registry-url> \
-    --call-fmt "apptainer exec {img} {cmd}"
+# Add image from registry
+datalad containers-add mriqc --url docker://nipreps/mriqc:23.1.0
+# Creates: .datalad/images/mriqc.yaml + fetches image
 ```
 
 ### containers-run
 
 ```bash
-# Use default profile
-datalad containers-run -n <name> <command>
+# Run with profile
+datalad containers-run --profile <profile-name> <command>
 
-# Use named profile
-datalad containers-run -n <name> --profile <profile-name> <command>
+# Override exec
+datalad containers-run --profile <profile-name> --exec "<template>" <command>
 
-# Override profile settings
-datalad containers-run -n <name> --profile <profile> --runtime-args "<extra-args>" <command>
-
-# Direct cmdexec (bypass profiles)
-datalad containers-run -n <name> --cmdexec "<template>" <command>
+# Direct exec (no profile, must specify image)
+datalad containers-run --image <image-name> --exec "<template>" <command>
 ```
 
-### New Commands
+### New commands
 
 ```bash
-# List available profiles
+# List images
+datalad containers-images
+
+# List profiles
 datalad containers-profiles
 
-# Show profile details
-datalad containers-profiles --show <profile-name>
-
 # Convert image format
-datalad containers-convert <name> --to <format>
-```
-
----
-
-## 6. Configuration Schema
-
-```ini
-# Dataset-level defaults
-[datalad "execution"]
-    default-profile = apptainer-default
-
-# Profile definitions
-[datalad "execution-profile.<name>"]
-    runtime = apptainer | singularity | podman | docker
-    template = <execution-template>
-    runtime-args = <default-args>
-
-# Container registration
-[datalad "containers.<name>"]
-    image = <path-to-image>
-    source-url = <registry-url>
-    source-registry = <registry-host>
-    source-digest = <sha256-digest>
-    format = oci | sif | simg
-    default-profile = <profile-name>
-
-# Container-specific profiles
-[datalad "containers.<name>.profile.<profile-name>"]
-    extends = <base-profile>
-    runtime-args = <override-args>
+datalad containers-convert <image-name> --to sif
 ```
 
 ---
@@ -346,7 +313,7 @@ datalad containers-convert <name> --to <format>
 
 ### Existing datasets continue to work
 
-- `cmdexec` config key still honored (treated as anonymous profile)
+- `cmdexec` in .datalad/config still honored (treated as inline exec)
 - Old URL schemes (`dhub://`, `oci:docker://`) emit deprecation warning, still function
 - Existing images don't need migration
 
@@ -357,10 +324,10 @@ datalad containers-convert <name> --to <format>
 datalad containers-migrate
 
 # Updates:
+# - Converts .datalad/config entries to YAML files
 # - dhub:// → docker://
 # - oci:docker:// → docker://
-# - cmdexec → named profile
-# - Adds provenance metadata
+# - Creates profile from cmdexec
 ```
 
 ---
@@ -371,21 +338,22 @@ datalad containers-migrate
 |--------|---------|----------|
 | URL scheme | Mixed semantics | Protocol = registry |
 | Storage format | Determined by URL | Native format from source |
-| Provenance | Minimal | Full (registry, digest, timestamp) |
-| Execution config | Baked in at add-time | Named profiles, runtime override |
-| Runtime flexibility | Requires code changes | Profile selection |
+| Provenance | Minimal, in config | Full, in YAML files |
+| Execution config | Baked in at add-time | Separate profiles |
+| Profile reuse | Not possible | Extend other profiles (clobber) |
 | Run record | Shim invocation | Actual command |
+| Configuration | .datalad/config (INI) | YAML files |
 
 ---
 
 ## 9. Open Questions
 
-1. **Profile inheritance** - Should profiles support `extends` for composition?
+1. **Custom registries** - How to specify private/custom OCI registries?
 
-2. **Profile scope** - Dataset-local only, or also user-global (`~/.config/datalad/`)?
+2. **Profile discovery** - How to list available profiles from subdatasets?
 
-3. **Profile validation** - Warn if profile references unavailable runtime?
+3. **Profile validation** - Warn if profile references unavailable image or runtime?
 
-4. **Default profile** - What if no profile specified and no default set? Error or built-in fallback?
+4. **Placeholder expansion** - What placeholders beyond `{img}` and `{cmd}`? (`{pwd}`, `{uid}`?)
 
-5. **Profile in provenance** - Store profile name, expanded command, or both?
+5. **Image format conversion** - On-demand or explicit `containers-convert` command?
