@@ -114,8 +114,8 @@ shub://org/repo:tag             # Singularity Hub (legacy)
 
 **Usage:**
 ```bash
-datalad containers-add mriqc/23.1.0 --url docker://nipreps/mriqc:23.1.0
-datalad containers-add samtools/1.9 --url quay://biocontainers/samtools:1.9
+datalad containers-add mriqc:23.1.0 --url docker://nipreps/mriqc:23.1.0
+datalad containers-add samtools:1.9 --url quay://biocontainers/samtools:1.9
 ```
 
 #### Storage Format
@@ -243,12 +243,25 @@ The `cmd` is what actually ran. The profile reference is informational.
 ### containers-add
 
 ```bash
-# Add image from registry
-datalad containers-add mriqc/23.1.0 --url docker://nipreps/mriqc:23.1.0
+# Add image from registry (name:version format, like Docker tags)
+datalad containers-add mriqc:23.1.0 --url docker://nipreps/mriqc:23.1.0
 
 # Add another version
-datalad containers-add mriqc/24.0.0 --url docker://nipreps/mriqc:24.0.0
+datalad containers-add mriqc:24.0.0 --url docker://nipreps/mriqc:24.0.0
+
+# Version defaults to URL tag if not specified
+datalad containers-add alpine --url docker://alpine:3.18
+# Creates alpine:3.18
+
+# Override URL tag with explicit version
+datalad containers-add alpine:prod --url docker://alpine:3.18
+# Creates alpine:prod
 ```
+
+After `containers-add`, the image is:
+- Stored at `.datalad/containers/images/<name>/<version>/image/`
+- Loaded into Docker daemon as `datalad-container/<name>:<version>`
+- Ready to use: `docker run --rm datalad-container/mriqc:23.1.0 ...`
 
 ### containers-run
 
