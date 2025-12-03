@@ -136,7 +136,7 @@ class ContainersRun(Interface):
             if exec_ is None:
                 exec_ = profile_data.get('exec')
 
-            # Validate image exists (error early)
+            # Validate: exec required, image validated if present
             try:
                 validate_profile({'image': image, 'exec': exec_, '_name': profile}, ds)
             except ValueError as exc:
@@ -147,7 +147,17 @@ class ContainersRun(Interface):
                     message=str(exc))
                 return
 
-        # New Phase 2 path: --image and --exec specified directly
+            # Profile without image requires --image CLI arg
+            if image is None:
+                yield get_status_dict(
+                    'run',
+                    ds=ds,
+                    status='error',
+                    message=f"Profile '{profile}' has no image. "
+                            "Specify --image to use this profile.")
+                return
+
+        # New Phase 2 path: --image and --exec specified directly (or from profile)
         if image is not None:
             if exec_ is None:
                 yield get_status_dict(

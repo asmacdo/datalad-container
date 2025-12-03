@@ -133,32 +133,32 @@ def _resolve_extends(profile: dict, ds: Dataset, seen: set) -> dict:
 
 
 def validate_profile(profile: dict, ds: Dataset) -> None:
-    """Validate that a profile's image exists.
+    """Validate that a profile is usable.
 
     Parameters
     ----------
     profile : dict
-        Resolved profile with 'image' key
+        Resolved profile (may have 'image' and/or 'exec' keys)
     ds : Dataset
         Dataset to check image in
 
     Raises
     ------
     ValueError
-        If required keys missing or image doesn't exist
+        If exec missing, or if image specified but doesn't exist
     """
-    if 'image' not in profile:
-        raise ValueError(
-            f"Profile '{profile.get('_name', 'unknown')}' missing required 'image' key"
-        )
-
     if 'exec' not in profile:
         raise ValueError(
             f"Profile '{profile.get('_name', 'unknown')}' missing required 'exec' key"
         )
 
+    # image is optional (base profiles may omit it, requiring --image CLI arg)
+    # but if specified, it must exist
+    image = profile.get('image')
+    if image is None:
+        return
+
     # Parse image name:version
-    image = profile['image']
     if ':' in image:
         base_name, version = image.split(':', 1)
     else:
