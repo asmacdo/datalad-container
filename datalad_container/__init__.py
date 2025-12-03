@@ -42,8 +42,13 @@ command_suite = (
             'ContainersRun',
             'containers-run',
             'containers_run',
-
-        )
+        ),
+        (
+            'datalad_container.containers_profiles',
+            'ContainersProfiles',
+            'containers-profiles',
+            'containers_profiles',
+        ),
     ]
 )
 

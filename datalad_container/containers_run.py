@@ -26,6 +26,7 @@ from datalad.support.param import Parameter
 from datalad.utils import ensure_iter
 
 from datalad_container.find_container import find_container_
+from datalad_container.profiles import load_profile, validate_profile
 
 lgr = logging.getLogger("datalad.containers.containers_run")
 
@@ -57,7 +58,13 @@ _run_params = dict(
         {cmd} = command to run.
         Examples: 'docker run --rm {img} {cmd}' or
         'apptainer exec oci:{img_path} {cmd}'.
-        Required when --image is specified."""),
+        Required when --image is specified without --profile."""),
+    profile=Parameter(
+        args=('--profile',),
+        metavar="NAME",
+        doc="""Name of an execution profile in .datalad/containers/profiles/.
+        Profiles define 'image' and 'exec' template. Can be overridden with
+        --image and/or --exec flags. Example: 'docker-default'."""),
 )
 
 
@@ -96,12 +103,49 @@ class ContainersRun(Interface):
     @eval_results
     def __call__(cmd, container_name=None, dataset=None,
                  inputs=None, outputs=None, message=None, expand=None,
-                 explicit=False, sidecar=None, image=None, exec_=None):
+                 explicit=False, sidecar=None, image=None, exec_=None,
+                 profile=None):
         from unittest.mock import \
             patch  # delayed, since takes long (~600ms for yoh)
         pwd, _ = get_command_pwds(dataset)
         ds = require_dataset(dataset, check_installed=True,
                              purpose='run a containerized command execution')
+
+        # Phase 3: Load profile and merge with CLI overrides
+        if profile is not None:
+            try:
+                profile_data = load_profile(ds, profile)
+            except FileNotFoundError as exc:
+                yield get_status_dict(
+                    'run',
+                    ds=ds,
+                    status='error',
+                    message=str(exc))
+                return
+            except ValueError as exc:
+                yield get_status_dict(
+                    'run',
+                    ds=ds,
+                    status='error',
+                    message=str(exc))
+                return
+
+            # CLI overrides take precedence over profile
+            if image is None:
+                image = profile_data.get('image')
+            if exec_ is None:
+                exec_ = profile_data.get('exec')
+
+            # Validate image exists (error early)
+            try:
+                validate_profile({'image': image, 'exec': exec_, '_name': profile}, ds)
+            except ValueError as exc:
+                yield get_status_dict(
+                    'run',
+                    ds=ds,
+                    status='error',
+                    message=str(exc))
+                return
 
         # New Phase 2 path: --image and --exec specified directly
         if image is not None:
