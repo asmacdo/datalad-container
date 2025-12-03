@@ -17,6 +17,71 @@ import logging
 
 lgr = logging.getLogger("datalad.containers.utils")
 
+# Registry URL schemes for Phase 1
+REGISTRY_SCHEMES = {
+    'docker': 'docker.io',
+    # TODO: test and enable quay:// and ghcr:// schemes
+    # 'quay': 'quay.io',
+    # 'ghcr': 'ghcr.io',
+    # TODO Phase 4: support generic OCI registries via oci://registry.example.com/...
+}
+
+
+def parse_registry_url(url):
+    """Parse a registry URL into components.
+
+    Parameters
+    ----------
+    url : str
+        URL like 'docker://nipreps/mriqc:23.1.0' or 'quay://org/repo:tag'
+
+    Returns
+    -------
+    dict or None
+        If URL matches a known scheme, returns dict with keys:
+        - scheme: 'docker', 'quay', 'ghcr'
+        - registry: 'docker.io', 'quay.io', 'ghcr.io'
+        - name: 'nipreps/mriqc'
+        - tag: '23.1.0' or 'latest' if not specified
+        - skopeo_url: 'docker://docker.io/nipreps/mriqc:23.1.0'
+
+        Returns None if URL doesn't match known schemes.
+    """
+    if url is None:
+        return None
+
+    for scheme, registry in REGISTRY_SCHEMES.items():
+        prefix = f'{scheme}://'
+        if url.startswith(prefix):
+            remainder = url[len(prefix):]
+
+            # Parse name and tag
+            if '@' in remainder:
+                # Digest reference like repo@sha256:abc...
+                name = remainder.split('@')[0]
+                tag = 'latest'
+            elif ':' in remainder.split('/')[-1]:
+                # Tag in last component: org/repo:tag
+                name, tag = remainder.rsplit(':', 1)
+            else:
+                name, tag = remainder, 'latest'
+
+            # Build skopeo URL
+            if tag == 'latest':
+                skopeo_url = f'docker://{registry}/{name}'
+            else:
+                skopeo_url = f'docker://{registry}/{name}:{tag}'
+
+            return {
+                'scheme': scheme,
+                'registry': registry,
+                'name': name,
+                'tag': tag,
+                'skopeo_url': skopeo_url,
+            }
+
+    return None
+
 
 def get_container_command():
     for command in ["apptainer", "singularity"]:

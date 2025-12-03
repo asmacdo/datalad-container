@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Code Style
+
+- **Imports at the top**: Always place imports at the top of the file, even during development/prototyping. No inline imports except for circular dependency breaks.
+
 ## Project Overview
 
 datalad-container is a DataLad extension for working with containerized computational environments. It enables tracking, versioning, and execution of containerized workflows within DataLad datasets using Singularity/Apptainer, Docker, and OCI-compliant images.

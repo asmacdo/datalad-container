@@ -33,7 +33,8 @@ from datalad.support.exceptions import InsufficientArgumentsError
 from datalad.support.param import Parameter
 from datalad.utils import Path
 
-from .utils import get_container_configuration, ensure_datalad_remote
+from .adapters import docker, oci
+from .utils import get_container_configuration, ensure_datalad_remote, parse_registry_url
 
 lgr = logging.getLogger("datalad.containers.containers_add")
 
@@ -64,22 +65,23 @@ def _resolve_img_url(url):
     return url
 
 
-def _guess_call_fmt(ds, name, url):
-    """Helper to guess a container exec setup based on
-    - a name (to be able to look up more config
-    - a plain url to make inference based on the source location
-
-    Should return `None` is no guess can be made.
-    """
-    if url is None:
-        return None
-    elif url.startswith('shub://') or url.startswith('docker://'):
-        return 'singularity exec {img} {cmd}'
-    elif url.startswith('dhub://'):
-        # {python} is replaced with sys.executable on *execute*
-        return '{python} -m datalad_container.adapters.docker run {img} {cmd}'
-    elif url.startswith('oci:'):
-        return '{python} -m datalad_container.adapters.oci run {img} {cmd}'
+# TODO Phase 4 backwards compatibility - restore execution format guessing
+# def _guess_call_fmt(ds, name, url):
+#     """Helper to guess a container exec setup based on
+#     - a name (to be able to look up more config
+#     - a plain url to make inference based on the source location
+#
+#     Should return `None` is no guess can be made.
+#     """
+#     if url is None:
+#         return None
+#     elif url.startswith('shub://') or url.startswith('docker://'):
+#         return 'singularity exec {img} {cmd}'
+#     elif url.startswith('dhub://'):
+#         # {python} is replaced with sys.executable on *execute*
+#         return '{python} -m datalad_container.adapters.docker run {img} {cmd}'
+#     elif url.startswith('oci:'):
+#         return '{python} -m datalad_container.adapters.oci run {img} {cmd}'
 
 
 def _ensure_datalad_remote(repo):
@@ -252,15 +254,13 @@ class ContainersAdd(Interface):
             image = image or container_cfg.get("image")
 
         if not image:
-            loc_cfg_var = "datalad.containers.location"
-            container_loc = \
-                ds.config.obtain(
-                    loc_cfg_var,
-                    # if not False it would actually modify the
-                    # dataset config file -- undesirable
-                    store=False,
-                )
-            image = op.join(ds.path, container_loc, name, 'image')
+            # Extract version from URL tag, default to 'latest'
+            parsed = parse_registry_url(url)
+            version = parsed['tag'] if parsed else 'latest'
+
+            # New versioned path: .datalad/containers/images/<name>/<version>/image/
+            image = op.join(ds.path, '.datalad', 'containers', 'images',
+                            name, version, 'image')
         else:
             image = op.join(ds.path, image)
 
@@ -271,9 +271,10 @@ class ContainersAdd(Interface):
             logger=lgr,
         )
 
-        if call_fmt is None:
-            # maybe built in knowledge can help
-            call_fmt = _guess_call_fmt(ds, name, url)
+        # TODO Phase 4 backwards compatibility
+        # if call_fmt is None:
+        #     # maybe built in knowledge can help
+        #     call_fmt = _guess_call_fmt(ds, name, url)
 
         # collect bits for a final and single save() call
         to_save = []
@@ -291,47 +292,56 @@ class ContainersAdd(Interface):
 
             imgurl = _resolve_img_url(url)
             lgr.debug('Attempt to obtain container image from: %s', imgurl)
-            if url.startswith("dhub://"):
-                from .adapters import docker
 
-                docker_image = url[len("dhub://"):]
+            # Check for OCI registry URLs (docker://, quay://, ghcr://)
+            parsed = parse_registry_url(url)
+            if parsed:
+                lgr.info("Saving OCI image from %s", url)
+                oci.save(parsed['skopeo_url'], Path(image))
 
-                lgr.debug(
-                    "Running 'docker pull %s and saving image to %s",
-                    docker_image, image)
-                runner.run(["docker", "pull", docker_image])
-                docker.save(docker_image, image)
-            elif url.startswith("oci:"):
-                from .adapters import oci
-                oci.save(url[len("oci:"):], Path(image))
-            elif url.startswith("docker://"):
-                image_dir, image_basename = op.split(image)
-                if not image_basename:
-                    raise ValueError("No basename in path {}".format(image))
-                if image_dir and not op.exists(image_dir):
-                    os.makedirs(image_dir)
+                # Link layers to git-annex with registry URLs
+                reference = f"{parsed['registry']}/{parsed['name']}"
+                if parsed['tag'] and parsed['tag'] != 'latest':
+                    reference += f":{parsed['tag']}"
+                oci.link(ds, Path(image), reference)
 
-                lgr.info("Building Singularity image for %s "
-                         "(this may take some time)",
-                         url)
-                runner.run(["singularity", "build", image_basename, url],
-                           cwd=image_dir or None)
+            # TODO Phase 4 backwards compatibility - dhub:// scheme
+            # elif url.startswith("dhub://"):
+            #     docker_image = url[len("dhub://"):]
+            #
+            #     lgr.debug(
+            #         "Running 'docker pull %s and saving image to %s",
+            #         docker_image, image)
+            #     runner.run(["docker", "pull", docker_image])
+            #     docker.save(docker_image, image)
+
+            # TODO Phase 4 backwards compatibility - oci: scheme (use docker://, quay://, ghcr:// instead)
+            # elif url.startswith("oci:"):
+            #     oci.save(url[len("oci:"):], Path(image))
+
             elif op.exists(url):
                 lgr.info("Copying local file %s to %s", url, image)
                 image_dir = op.dirname(image)
                 if image_dir and not op.exists(image_dir):
                     os.makedirs(image_dir)
                 copyfile(url, image)
-            else:
-                if _HAS_SHUB_DOWNLOADER and url.startswith('shub://'):
-                    ensure_datalad_remote(ds.repo)
+            # TODO Phase 4 backwards compatibility - shub:// and generic URL handling
+            # else:
+            #     if _HAS_SHUB_DOWNLOADER and url.startswith('shub://'):
+            #         ensure_datalad_remote(ds.repo)
+            #
+            #     try:
+            #         ds.repo.add_url_to_file(image, imgurl)
+            #     except Exception as e:
+            #         result["status"] = "error"
+            #         result["message"] = str(e)
+            #         yield result
 
-                try:
-                    ds.repo.add_url_to_file(image, imgurl)
-                except Exception as e:
-                    result["status"] = "error"
-                    result["message"] = str(e)
-                    yield result
+            else:
+                raise ValueError(
+                    f"Unsupported URL scheme: {url}. "
+                    "Supported schemes: docker://, quay://, ghcr://"
+                )
             # TODO do we have to take care of making the image executable
             # if --call_fmt is not provided?
             to_save.append(image)
@@ -357,11 +367,12 @@ class ContainersAdd(Interface):
             # always store a POSIX path, relative to dataset root
             str(PurePosixPath(Path(image).relative_to(ds.pathobj))),
             force=True)
-        if call_fmt:
-            ds.config.set(
-                "{}.cmdexec".format(cfgbasevar),
-                call_fmt,
-                force=True)
+        # TODO Phase 4 backwards compatibility
+        # if call_fmt:
+        #     ds.config.set(
+        #         "{}.cmdexec".format(cfgbasevar),
+        #         call_fmt,
+        #         force=True)
         # --extra-input sanity check
         # TODO: might also want to do that for --call-fmt above?
         extra_input_placeholders = dict(img_dirpath="", img_dspath="")
@@ -394,7 +405,3 @@ class ContainersAdd(Interface):
             yield r
         result["status"] = "ok"
         yield result
-
-        # We need to do this after the image is saved.
-        if url and url.startswith("oci:docker://"):
-            oci.link(ds, Path(image), url[len("oci:docker://"):])
