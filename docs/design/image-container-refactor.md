@@ -337,13 +337,13 @@ The `skopeo` branch already provides:
 
 ```bash
 # Add image
-datalad containers-add mriqc/23.1.0 --url docker://nipreps/mriqc:23.1.0
+datalad containers-add mriqc:23.1.0 --url docker://nipreps/mriqc:23.1.0
 
 # Use with datalad run (no containers-run needed)
 datalad run \
     --input .datalad/containers/images/mriqc/23.1.0 \
     --output outputs/ \
-    "apptainer exec oci:.datalad/containers/images/mriqc/23.1.0/image mriqc ..."
+    "docker run --rm datalad-container/mriqc:23.1.0 mriqc ..."
 ```
 
 This alone is valuable - full provenance, no shims, user controls execution.
@@ -356,16 +356,17 @@ Rebuild `containers-run` with explicit `--image` and `--exec` flags:
 
 ```bash
 datalad containers-run \
-    --image mriqc/23.1.0 \
-    --exec "apptainer exec {img} {cmd}" \
+    --image mriqc:23.1.0 \
+    --exec "docker run --rm {img} {cmd}" \
     mriqc /data /output participant
 ```
 
 **What this provides:**
-- `--image` resolves to `.datalad/containers/images/<name>/<version>/`
+- `--image` specifies container name:version
+- `{img}` expands to Docker image name (`datalad-container/mriqc:23.1.0`)
+- `{cmd}` expands to the command arguments
 - `--exec` is the execution template (required at this phase)
-- `{img}` and `{cmd}` placeholder expansion
-- Provenance records the resolved command
+- Provenance records the resolved command (not a shim)
 
 **What's NOT done yet:**
 - No profiles
