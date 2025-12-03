@@ -380,34 +380,46 @@ datalad containers-run \
 - Works with Docker, Apptainer, Singularity, Podman, etc.
 - Provenance records the resolved command (not a shim)
 
-**What's NOT done yet:**
-- No profiles
-- Must specify both `--image` and `--exec` every time
-
 **Milestone:** `containers-run` works without profiles, giving explicit control.
 
 ---
 
 ### Phase 3: Execution Profiles
+**Status:** COMPLETE (2025-12-03)
 
 Add YAML execution profile system on top of Phase 2:
 
 ```bash
 # With profile
-datalad containers-run --profile mriqc mriqc /data /output participant
+datalad containers-run --profile docker-default -- sh -c "echo hello"
 
 # Override profile's exec
-datalad containers-run --profile mriqc --exec "apptainer exec --nv {img} {cmd}" ...
+datalad containers-run --profile docker-default --exec "docker run --rm {img} {cmd}" ...
 
 # Override profile's image
-datalad containers-run --profile mriqc --image mriqc/24.0.0 ...
+datalad containers-run --profile docker-default --image alpine:3.18 ...
 ```
 
-**What this provides:**
+**Implemented:**
 - YAML profile files in `.datalad/containers/profiles/`
-- Profile inheritance with clobber semantics
-- CLI overrides (`--image`, `--exec`) take precedence
+- Profile inheritance with clobber semantics via `extends:` key
+- CLI overrides (`--image`, `--exec`) take precedence over profile
 - `containers-profiles` command to list available profiles
+- Early validation: error if profile references missing image
+- pyyaml dependency added
+
+**Tested:**
+```bash
+# docker-default.yaml: image: alpine:latest, exec: docker run --rm ... {img} {cmd}
+datalad containers-run --profile docker-default -- sh -c "echo hello"
+
+# apptainer-default.yaml: image: alpine:latest, exec: apptainer exec oci:{img_path} {cmd}
+datalad containers-run --profile apptainer-default -- sh -c "echo hello"
+
+# docker-myoverrides.yaml: extends: docker-default, exec: ... -e MY_VAR=hello {img} {cmd}
+datalad containers-run --profile docker-myoverrides -- sh -c 'echo $MY_VAR'
+# outputs: hello
+```
 
 **Value for ReproNim/containers:**
 - Ship base profiles alongside images
