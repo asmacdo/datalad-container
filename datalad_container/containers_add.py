@@ -308,7 +308,11 @@ class ContainersAdd(Interface):
                 # TODO: add --load flag to make this optional
                 # Load image into Docker daemon so it's ready to use
                 image_id = oci.load(Path(image))
-                lgr.info("Loaded image into Docker daemon: %s", image_id)
+                # TODO: Docker normalizes docker.io names - verify this works for
+                # other registries (quay.io, ghcr.io) and non-library images (org/repo)
+                docker_name = f"datalad-container/{parsed['name']}:{parsed['tag']}"
+                # TODO: this log gets buried - surface docker_name in final result message
+                lgr.info("Loaded image into Docker daemon: %s", docker_name)
 
             # TODO Phase 4 backwards compatibility - dhub:// scheme
             # elif url.startswith("dhub://"):
