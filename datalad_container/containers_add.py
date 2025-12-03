@@ -223,10 +223,11 @@ class ContainersAdd(Interface):
         runner = WitlessRunner()
 
         # prevent madness in the config file
-        if not re.match(r'^[0-9a-zA-Z-]+$', name):
+        # Allow name:version format (e.g., 'alpine:latest', 'mriqc:23.1.0')
+        if not re.match(r'^[0-9a-zA-Z-]+(:[0-9a-zA-Z._-]+)?$', name):
             raise ValueError(
-                "Container names can only contain alphanumeric characters "
-                "and '-', got: '{}'".format(name))
+                "Container names must be 'name' or 'name:version' "
+                "(alphanumeric, '-', '_', '.'), got: '{}'".format(name))
 
         container_cfg = get_container_configuration(ds, name)
         if 'image' in container_cfg:
@@ -254,13 +255,18 @@ class ContainersAdd(Interface):
             image = image or container_cfg.get("image")
 
         if not image:
-            # Extract version from URL tag, default to 'latest'
-            parsed = parse_registry_url(url)
-            version = parsed['tag'] if parsed else 'latest'
+            # Parse name:version format if provided
+            if ':' in name:
+                base_name, version = name.split(':', 1)
+            else:
+                base_name = name
+                # Extract version from URL tag, default to 'latest'
+                parsed = parse_registry_url(url)
+                version = parsed['tag'] if parsed else 'latest'
 
             # New versioned path: .datalad/containers/images/<name>/<version>/image/
             image = op.join(ds.path, '.datalad', 'containers', 'images',
-                            name, version, 'image')
+                            base_name, version, 'image')
         else:
             image = op.join(ds.path, image)
 
@@ -308,9 +314,12 @@ class ContainersAdd(Interface):
                 # TODO: add --load flag to make this optional
                 # Load image into Docker daemon so it's ready to use
                 image_id = oci.load(Path(image))
-                # TODO: Docker normalizes docker.io names - verify this works for
-                # other registries (quay.io, ghcr.io) and non-library images (org/repo)
-                docker_name = f"datalad-container/{parsed['name']}:{parsed['tag']}"
+                # Tag with meaningful name based on container name
+                if ':' in name:
+                    docker_name = f"datalad-container/{name}"
+                else:
+                    docker_name = f"datalad-container/{name}:{version}"
+                runner.run(["docker", "tag", image_id, docker_name])
                 # TODO: this log gets buried - surface docker_name in final result message
                 lgr.info("Loaded image into Docker daemon: %s", docker_name)
 
