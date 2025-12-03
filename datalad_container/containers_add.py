@@ -305,6 +305,11 @@ class ContainersAdd(Interface):
                     reference += f":{parsed['tag']}"
                 oci.link(ds, Path(image), reference)
 
+                # TODO: add --load flag to make this optional
+                # Load image into Docker daemon so it's ready to use
+                image_id = oci.load(Path(image))
+                lgr.info("Loaded image into Docker daemon: %s", image_id)
+
             # TODO Phase 4 backwards compatibility - dhub:// scheme
             # elif url.startswith("dhub://"):
             #     docker_image = url[len("dhub://"):]
