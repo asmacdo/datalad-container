@@ -204,7 +204,8 @@ The path is explicit and unambiguous.
 
 #### Placeholder Expansion
 
-- `{img}` - resolves to image path (e.g., `oci:.datalad/containers/images/mriqc/23.1.0/image`)
+- `{img}` - Docker image name (`datalad-container/mriqc:23.1.0`)
+- `{img_path}` - OCI directory path (`.datalad/containers/images/mriqc/23.1.0/image`)
 - `{cmd}` - the command arguments
 
 #### No Automatic Runtime Detection
@@ -212,9 +213,9 @@ The path is explicit and unambiguous.
 Earlier designs considered inspecting `exec` to auto-detect runtime. **This is explicitly rejected.**
 
 Each profile is explicit about its runtime:
-- `mriqc-apptainer.yaml` - user writes `apptainer exec oci:{img} {cmd}`
+- `mriqc-apptainer.yaml` - user writes `apptainer exec oci:{img_path} {cmd}`
 - `mriqc-podman.yaml` - user writes `podman run {img} {cmd}`
-- `mriqc-docker.yaml` - user writes `docker run {img} {cmd}`
+- `mriqc-docker.yaml` - user writes `docker run --rm {img} {cmd}`
 
 **Benefits:**
 - No Python code per runtime
