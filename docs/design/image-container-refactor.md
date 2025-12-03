@@ -355,17 +355,28 @@ This alone is valuable - full provenance, no shims, user controls execution.
 Rebuild `containers-run` with explicit `--image` and `--exec` flags:
 
 ```bash
+# With Docker
 datalad containers-run \
     --image mriqc:23.1.0 \
     --exec "docker run --rm {img} {cmd}" \
     mriqc /data /output participant
+
+# With Apptainer/Singularity
+datalad containers-run \
+    --image mriqc:23.1.0 \
+    --exec "apptainer exec oci:{img_path} {cmd}" \
+    mriqc /data /output participant
 ```
+
+**Placeholders:**
+- `{img}` - Docker image name (`datalad-container/mriqc:23.1.0`)
+- `{img_path}` - OCI directory path (`.datalad/containers/images/mriqc/23.1.0/image`)
+- `{cmd}` - command arguments
 
 **What this provides:**
 - `--image` specifies container name:version
-- `{img}` expands to Docker image name (`datalad-container/mriqc:23.1.0`)
-- `{cmd}` expands to the command arguments
 - `--exec` is the execution template (required at this phase)
+- Works with Docker, Apptainer, Singularity, Podman, etc.
 - Provenance records the resolved command (not a shim)
 
 **What's NOT done yet:**
