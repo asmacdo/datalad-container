@@ -51,8 +51,12 @@ _run_params = dict(
         args=('--exec',),
         dest='exec_',
         metavar="TEMPLATE",
-        doc="""Execution template string (e.g., 'docker run --rm {img} {cmd}').
-        Placeholders: {img} = docker image name, {cmd} = command to run.
+        doc="""Execution template string. Placeholders:
+        {img} = Docker image name (datalad-container/name:version),
+        {img_path} = OCI directory path (.datalad/containers/images/...),
+        {cmd} = command to run.
+        Examples: 'docker run --rm {img} {cmd}' or
+        'apptainer exec oci:{img_path} {cmd}'.
         Required when --image is specified."""),
 )
 
@@ -115,24 +119,26 @@ class ContainersRun(Interface):
             else:
                 base_name, version = image, 'latest'
 
-            # Resolve to docker image name
+            # Resolve paths and names
             docker_image = f"datalad-container/{base_name}:{version}"
+            image_path = f".datalad/containers/images/{base_name}/{version}/image"
 
             # Expand placeholders in exec template
             cmd = normalize_command(cmd)
             try:
-                resolved_cmd = exec_.format(img=docker_image, cmd=cmd)
+                resolved_cmd = exec_.format(
+                    img=docker_image,
+                    img_path=image_path,
+                    cmd=cmd,
+                )
             except KeyError as exc:
                 yield get_status_dict(
                     'run',
                     ds=ds,
                     status='error',
                     message=('Unrecognized --exec placeholder: %s. '
-                             'Available: {img}, {cmd}', exc))
+                             'Available: {img}, {img_path}, {cmd}', exc))
                 return
-
-            # Image path for input tracking
-            image_path = f".datalad/containers/images/{base_name}/{version}/image"
 
             with patch.dict('os.environ',
                             {CONTAINER_NAME_ENVVAR: image}):
