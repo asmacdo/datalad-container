@@ -41,6 +41,19 @@ _run_params = dict(
         metavar="NAME",
         doc="""Specify the name of or a path to a known container to use
         for execution, in case multiple containers are configured."""),
+    image=Parameter(
+        args=('--image',),
+        metavar="NAME",
+        doc="""Name of the image to use (e.g., 'alpine:latest' or 'mriqc:23.1.0').
+        Resolves to .datalad/containers/images/<name>/<version>/image.
+        When specified, --exec is required."""),
+    exec_=Parameter(
+        args=('--exec',),
+        dest='exec_',
+        metavar="TEMPLATE",
+        doc="""Execution template string (e.g., 'docker run --rm {img} {cmd}').
+        Placeholders: {img} = docker image name, {cmd} = command to run.
+        Required when --image is specified."""),
 )
 
 
@@ -79,13 +92,64 @@ class ContainersRun(Interface):
     @eval_results
     def __call__(cmd, container_name=None, dataset=None,
                  inputs=None, outputs=None, message=None, expand=None,
-                 explicit=False, sidecar=None):
+                 explicit=False, sidecar=None, image=None, exec_=None):
         from unittest.mock import \
             patch  # delayed, since takes long (~600ms for yoh)
         pwd, _ = get_command_pwds(dataset)
         ds = require_dataset(dataset, check_installed=True,
                              purpose='run a containerized command execution')
 
+        # New Phase 2 path: --image and --exec specified directly
+        if image is not None:
+            if exec_ is None:
+                yield get_status_dict(
+                    'run',
+                    ds=ds,
+                    status='error',
+                    message='--exec is required when --image is specified')
+                return
+
+            # Parse image name:version
+            if ':' in image:
+                base_name, version = image.split(':', 1)
+            else:
+                base_name, version = image, 'latest'
+
+            # Resolve to docker image name
+            docker_image = f"datalad-container/{base_name}:{version}"
+
+            # Expand placeholders in exec template
+            cmd = normalize_command(cmd)
+            try:
+                resolved_cmd = exec_.format(img=docker_image, cmd=cmd)
+            except KeyError as exc:
+                yield get_status_dict(
+                    'run',
+                    ds=ds,
+                    status='error',
+                    message=('Unrecognized --exec placeholder: %s. '
+                             'Available: {img}, {cmd}', exc))
+                return
+
+            # Image path for input tracking
+            image_path = f".datalad/containers/images/{base_name}/{version}/image"
+
+            with patch.dict('os.environ',
+                            {CONTAINER_NAME_ENVVAR: image}):
+                for r in run_command(
+                        cmd=resolved_cmd,
+                        dataset=dataset or (ds if ds.path == pwd else None),
+                        inputs=inputs,
+                        extra_inputs=[image_path],
+                        outputs=outputs,
+                        message=message,
+                        expand=expand,
+                        explicit=explicit,
+                        sidecar=sidecar):
+                    yield r
+            return
+
+        # Legacy path: use -n/--container-name with config lookup
         # this following block locates the target container. this involves a
         # configuration look-up. This is not using
         # get_container_configuration(), because it needs to account for a
