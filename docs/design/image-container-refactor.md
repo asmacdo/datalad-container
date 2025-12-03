@@ -392,7 +392,52 @@ datalad containers-run --profile mriqc --image mriqc/24.0.0 ...
 
 ---
 
-## 7. Open Questions
+## 7. Breaking Changes (Phase 1)
+
+Phase 1 introduces breaking changes to simplify the URL scheme and remove execution semantics from `containers-add`.
+
+### URL Scheme Changes
+
+| Old Scheme | New Behavior |
+|------------|--------------|
+| `docker://org/repo:tag` | **BREAKING**: Now stores as OCI directory via Skopeo (was: Singularity build to SIF) |
+| `quay://org/repo:tag` | **NEW**: Stores as OCI directory via Skopeo |
+| `ghcr://org/repo:tag` | **NEW**: Stores as OCI directory via Skopeo |
+| `oci:docker://...` | **REMOVED**: Use `docker://` instead |
+| `dhub://...` | **REMOVED**: Use `docker://` instead |
+| `shub://...` | **REMOVED**: Singularity Hub deprecated |
+
+**Migration path for `docker://` users who want SIF:**
+```bash
+# Old way (created SIF directly)
+datalad containers-add myimg --url docker://org/repo:tag
+
+# New way (OCI storage, convert to SIF separately)
+datalad containers-add myimg --url docker://org/repo:tag
+datalad containers-convert myimg --to sif  # Phase 1+ TODO
+```
+
+### Storage Path Changes
+
+| Aspect | Old | New |
+|--------|-----|-----|
+| Default location | `.datalad/environments/<name>/image` | `.datalad/containers/images/<name>/<version>/image/` |
+| Version in path | No | Yes (extracted from URL tag, defaults to `latest`) |
+| Config storage | `.datalad/config` entries | Same (image path updated) |
+
+### Execution Configuration Changes
+
+| Aspect | Old | New (Phase 1) |
+|--------|-----|---------------|
+| `--call-fmt` parameter | Required or auto-guessed | **REMOVED** (commented out, TODO Phase 4) |
+| `cmdexec` config | Set automatically | **NOT SET** |
+| Auto-detection | Based on URL scheme | None - images have no execution semantics |
+
+**Why this matters:** Phase 1 images are "just storage" - they don't know how to run. Users must specify execution explicitly via `datalad run` or wait for Phase 2's `--exec` flag.
+
+---
+
+## 8. Open Questions
 
 1. **Custom registries** - How to specify private/custom OCI registries?
 
