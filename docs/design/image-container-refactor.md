@@ -49,9 +49,8 @@ cmd: {python} -m datalad_container.adapters.oci run {img} {cmd}
 This doesn't capture:
 - Which runtime actually executed
 - What flags were used
-- The actual command that ran
 
-Someone replaying the record doesn't know what really happened.
+So we have reproducibility if everything "just works", but if anything goes wrong it is not possible to compare container runtime invocations.
 
 ### 2.4 Adding Runtimes Requires Code Changes
 
