@@ -70,7 +70,7 @@ This doesn't scale and adds maintenance burden.
 **Two concepts only:**
 
 1. **Image** - versioned artifact with provenance, no execution semantics
-2. **Execution Profile** (`profile`) - reusable execution recipe that references an image
+2. **Execution Profile** (`profile`) - execution recipes that can be reused
 
 **Key principles:**
 
@@ -172,22 +172,20 @@ Both formats can coexist; profiles reference the appropriate one.
 Profiles are YAML files in `.datalad/containers/profiles/`:
 
 ```yaml
-# .datalad/containers/profiles/mriqc.yaml
-image: mriqc/23.1.0
-exec: apptainer exec --cleanenv {img} {cmd}
+# .datalad/containers/profiles/alpine-docker.yaml
+image: alpine:latest
+exec: docker run --rm --user $(id -u):$(id -g) -v $(pwd):/work -w /work {img} {cmd}
 ```
 
 ```yaml
-# .datalad/containers/profiles/mriqc-gpu.yaml
-extends: mriqc
-exec: apptainer exec --cleanenv --nv {img} {cmd}
+# .datalad/containers/profiles/alpine-apptainer.yaml
+image: alpine:latest
+exec: apptainer exec --cleanenv {img} {cmd}
 ```
 
 #### Clobber Semantics
 
 Child profiles **completely replace** parent values. No magic merging.
-
-If you want parent's flags plus yours, copy them explicitly. This is intentional - you see exactly what will run.
 
 #### Cross-Dataset Extension
 
@@ -199,7 +197,14 @@ extends: code/containers/.datalad/containers/profiles/mriqc.yaml
 exec: apptainer exec --cleanenv --bind /scratch:/scratch {img} {cmd}
 ```
 
-The path is explicit and unambiguous.
+While this provides only minimal value like this, further development of to make profiles more
+composable could make this very flexible and reusable.
+
+```yaml
+# my-analysis/.datalad/containers/profiles/mriqc-local.yaml
+extends: code/containers/.datalad/containers/profiles/mriqc.yaml
+binds: --bind /my/weird/scratch:/scratch
+```
 
 #### Placeholder Expansion
 
@@ -291,7 +296,7 @@ datalad containers-run --image mriqc/23.1.0 --exec "apptainer exec {img} {cmd}" 
 
 ```bash
 # List images
-datalad containers-images
+datalad containers-list
 
 # List profiles
 datalad containers-profiles
