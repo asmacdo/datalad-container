@@ -2,6 +2,8 @@
 
 This document describes how ReproNim/containers can leverage the refactored datalad-container architecture.
 
+STATUS: Very rough draft! 
+
 ---
 
 ## New Capabilities
@@ -26,6 +28,10 @@ With native format storage and versioned image directories, ReproNim can provide
         └── image/
 ```
 
+**Image naming:** Use `name:version` format (like Docker tags):
+- `mriqc:23.1.0` → `.datalad/containers/images/mriqc/23.1.0/image/`
+- `fmriprep:24.1.0` → `.datalad/containers/images/fmriprep/24.1.0/image/`
+
 ### Benefits of OCI format for ReproNim:
 
 - **Layer deduplication** - Many neuroimaging containers share base layers
@@ -37,25 +43,50 @@ With native format storage and versioned image directories, ReproNim can provide
 
 ## 2. Execution Profiles
 
-ReproNim ships curated base profiles alongside images. Users extend these for their specific needs.
+ReproNim can ship curated execution profiles alongside images. Users extend these for their specific needs.
+
+### Available Placeholders
+
+- `{img}` - Docker image name (`datalad-container/mriqc:23.1.0`)
+- `{img_path}` - OCI directory path (`.datalad/containers/images/mriqc/23.1.0/image`)
+- `{cmd}` - command arguments
 
 ### ReproNim Base Profiles
+
+**Option A: Profiles with image (ready to use)**
 
 ```yaml
 # .datalad/containers/profiles/mriqc.yaml
 # Base MRIQC profile - sane defaults for most users
 
-image: mriqc/23.1.0
-exec: apptainer exec --cleanenv {img} {cmd}
+image: mriqc:23.1.0
+exec: apptainer exec --cleanenv oci:{img_path} {cmd}
 ```
 
 ```yaml
 # .datalad/containers/profiles/fmriprep.yaml
 # Base fMRIPrep profile
 
-image: fmriprep/23.2.0
-exec: apptainer exec --cleanenv {img} {cmd}
+image: fmriprep:23.2.0
+exec: apptainer exec --cleanenv oci:{img_path} {cmd}
 ```
+
+**Option B: Runtime-only profiles (user specifies image)**
+
+```yaml
+# .datalad/containers/profiles/apptainer-default.yaml
+# No image - user must provide --image
+
+exec: apptainer exec oci:{img_path} {cmd}
+```
+
+```yaml
+# .datalad/containers/profiles/docker-default.yaml
+
+exec: docker run --rm --user $(id -u):$(id -g) -v $(pwd):/work -w /work {img} {cmd}
+```
+
+Usage: `datalad containers-run --profile apptainer-default --image mriqc:23.1.0 ...`
 
 ### User Extensions
 
@@ -65,17 +96,17 @@ Users create their own profiles that extend ReproNim's base:
 # my-analysis/.datalad/containers/profiles/mriqc-mylab.yaml
 
 extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
-exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /data/mylab:/input {img} {cmd}
+exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /data/mylab:/input oci:{img_path} {cmd}
 ```
 
 ```yaml
 # my-analysis/.datalad/containers/profiles/mriqc-gpu.yaml
 
 extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
-exec: apptainer exec --cleanenv --nv {img} {cmd}
+exec: apptainer exec --cleanenv --nv oci:{img_path} {cmd}
 ```
 
-**Key point:** ReproNim provides the base. Users clobber `exec` with their environment-specific settings. No runtime-specific profiles (apptainer-gpu, podman-default, etc.) - users know what they need.
+**Key point:** ReproNim provides the base. Users clobber `exec` with their environment-specific settings (clobber semantics - child completely replaces parent's exec, no merging).
 
 ---
 
@@ -129,12 +160,14 @@ Provenance (source URL, digest, fetch time) is stored in git commits, not separa
 datalad clone https://github.com/ReproNim/containers inputs/containers
 
 # List available images and profiles
-datalad containers-images -d inputs/containers
+datalad containers-list -d inputs/containers
 datalad containers-profiles -d inputs/containers
 
-# Run with base profile
-datalad containers-run -d inputs/containers --profile mriqc \
-    mriqc /bids /outputs participant
+# Run with base profile (profile specifies image)
+datalad containers-run --profile mriqc -- mriqc /bids /outputs participant
+
+# Or use runtime-only profile with explicit image
+datalad containers-run --profile apptainer-default --image mriqc:23.1.0 -- mriqc /bids /outputs participant
 ```
 
 ### Creating a Lab-Specific Profile
@@ -144,21 +177,27 @@ datalad containers-run -d inputs/containers --profile mriqc \
 mkdir -p .datalad/containers/profiles
 cat > .datalad/containers/profiles/mriqc-mylab.yaml << 'EOF'
 extends: inputs/containers/.datalad/containers/profiles/mriqc.yaml
-exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /gpfs/mylab:/data {img} {cmd}
+exec: apptainer exec --cleanenv --nv --bind /scratch:/scratch --bind /gpfs/mylab:/data oci:{img_path} {cmd}
 EOF
 
+# Save to dataset
+datalad save -m "Add mriqc-mylab profile" .datalad/containers/profiles/
+
 # Use it
-datalad containers-run --profile mriqc-mylab \
-    mriqc /data/bids /data/outputs participant
+datalad containers-run --profile mriqc-mylab -- mriqc /data/bids /data/outputs participant
 ```
 
 ### One-Off Override
 
 ```bash
-# Use base profile but override exec for this run
-datalad containers-run -d inputs/containers --profile mriqc \
-    --exec "apptainer exec --cleanenv --nv {img} {cmd}" \
-    mriqc /bids /outputs participant
+# Use base profile but override exec for this run (adds GPU support)
+datalad containers-run --profile mriqc \
+    --exec "apptainer exec --cleanenv --nv oci:{img_path} {cmd}" \
+    -- mriqc /bids /outputs participant
+
+# Use base profile but override image (use newer version)
+datalad containers-run --profile mriqc --image mriqc:24.0.0 \
+    -- mriqc /bids /outputs participant
 ```
 
 ### Using a Specific Version
@@ -166,12 +205,12 @@ datalad containers-run -d inputs/containers --profile mriqc \
 ```bash
 # Create profile for newer version
 cat > .datalad/containers/profiles/mriqc-24.yaml << 'EOF'
-image: mriqc/24.0.0
-exec: apptainer exec --cleanenv {img} {cmd}
+image: mriqc:24.0.0
+exec: apptainer exec --cleanenv oci:{img_path} {cmd}
 EOF
 
-datalad containers-run --profile mriqc-24 \
-    mriqc /bids /outputs participant
+datalad save -m "Add mriqc-24 profile" .datalad/containers/profiles/
+datalad containers-run --profile mriqc-24 -- mriqc /bids /outputs participant
 ```
 
 ---
@@ -242,11 +281,14 @@ exec: >-
   --contain
   -H code/containers/binds/HOME
   -B code/containers/binds/zoneinfo/UTC:/etc/localtime
-  -B {pwd}
-  --pwd {pwd}
-  {img}
+  oci:{img_path}
   {cmd}
 ```
+
+**Available placeholders:**
+- `{img}` - Docker image name (for docker/podman)
+- `{img_path}` - OCI directory path (for apptainer with `oci:` prefix)
+- `{cmd}` - command arguments
 
 ### Upstream RFE: Advanced Profile Features
 
@@ -298,7 +340,7 @@ With these extensions, a profile could fully replace the shim:
 ```yaml
 # .datalad/containers/profiles/mriqc-repronim.yaml
 
-image: mriqc/23.1.0
+image: mriqc:23.1.0
 
 pre-run: code/containers/scripts/setup-env.sh
 post-run: code/containers/scripts/cleanup.sh
@@ -315,10 +357,7 @@ exec: >-
   -B {env.TMPDIR}:/tmp
   -B {env.TMPDIR}/var:/var/tmp
   -B code/containers/binds/zoneinfo/UTC:/etc/localtime
-  -B {pwd}
-  --pwd {pwd}
-  -W {env.TMPDIR}
-  {img}
+  oci:{img_path}
   {cmd}
 ```
 
@@ -330,34 +369,26 @@ Instead of runtime detection, use a separate profile:
 # .datalad/containers/profiles/mriqc-repronim-docker.yaml
 # For non-Linux systems (macOS, Windows with Docker)
 
-image: mriqc/23.1.0
+image: mriqc:23.1.0
 
 pre-run: code/containers/scripts/setup-env-docker.sh
 
 env:
-  SINGULARITYENV_MPLCONFIGDIR: /tmp/mpl-config
+  MPLCONFIGDIR: /tmp/mpl-config
 
 exec: >-
   docker run
-  --privileged
   --rm
-  -e UID={env.UID}
-  -e GID={env.GID}
-  -v {env.TMPDIR}:{env.TMPDIR}
-  -v {pwd}:{pwd}
-  -v code/containers/binds/HOME:{env.BHOME}
-  -w {pwd}
-  repronim/containers:latest
-  exec
-  --cleanenv
-  -H {env.BHOME}
-  -B {env.TMPDIR}:/tmp
-  --pwd {pwd}
+  --user $(id -u):$(id -g)
+  -v $(pwd):/work
+  -w /work
   {img}
   {cmd}
 ```
 
 Users on macOS would use `--profile mriqc-repronim-docker` explicitly.
+
+**Note:** The Docker profile uses `{img}` (the Docker image name like `datalad-container/mriqc:23.1.0`) while apptainer profiles use `{img_path}` (the OCI directory path).
 
 ### Summary: Upstream RFE for datalad-container
 
