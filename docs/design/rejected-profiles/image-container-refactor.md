@@ -283,13 +283,13 @@ datalad containers-run --profile mriqc <command>
 datalad containers-run --profile mriqc --exec "apptainer exec --nv {img} {cmd}" <command>
 
 # Override just image (keep profile's exec)
-datalad containers-run --profile mriqc --image mriqc/24.0.0 <command>
+datalad containers-run --profile mriqc --image mriqc:24.0.0 <command>
 
 # Override both
-datalad containers-run --profile mriqc --image mriqc/24.0.0 --exec "..." <command>
+datalad containers-run --profile mriqc --image mriqc:24.0.0 --exec "..." <command>
 
 # No profile (must specify both)
-datalad containers-run --image mriqc/23.1.0 --exec "apptainer exec {img} {cmd}" <command>
+datalad containers-run --image mriqc:23.1.0 --exec "apptainer exec {img} {cmd}" <command>
 ```
 
 ### New Commands
