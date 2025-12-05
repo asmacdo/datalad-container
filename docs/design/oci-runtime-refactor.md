@@ -28,13 +28,13 @@ Builds on the skopeo OCI image storage PR: https://github.com/datalad/datalad-co
 
 ## Summary
 
-- `docker://` URLs now store images as OCI directories via Skopeo (not singularity build)
+- `docker://` URLs store images as OCI directories via Skopeo (not singularity build)
 - Image paths include version: `.datalad/environments/<name>/<version>/image/`
     - (allows names to match upstream repository)
 - New `--runtime` flag on `containers-add` to select docker/podman/apptainer
 - New `runtime` configuration option in `.datalad/config`
 
-## Completed Changes
+## Proposed Changes
 
 ### 1. docker:// Uses OCI Storage
 
@@ -81,8 +81,6 @@ The shim:
 1. Loads OCI directory into container runtime (docker/podman)
 2. Runs container with appropriate flags
 3. Works transparently with `datalad containers-run`
-
-## Planned Changes
 
 ### 4. Runtime Selection via `--runtime` Flag
 
